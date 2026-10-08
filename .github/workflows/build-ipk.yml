@@ -1,0 +1,37 @@
+name: Build webOS IPK Package
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js Environment
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install webOS Tools CLI
+        run: npm install -g @webos-tools/cli
+
+      - name: Verify webOS CLI Installation
+        run: ares-package --version
+
+      - name: Package VYBE OTT Application
+        run: |
+          mkdir -p dist
+          ares-package ./vybe-ott -o ./dist
+
+      - name: Upload IPK Artifact for Phone Download
+        uses: actions/upload-artifact@v4
+        with:
+          name: vybe-ott-webos-package
+          path: dist/*.ipk
+          retention-days: 30

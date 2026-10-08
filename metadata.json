@@ -1,0 +1,6 @@
+{
+  "name": "VYBE OTT",
+  "description": "Netflix-style movie and series streaming app for LG webOS TV with Magic Remote support and Cloudflare Worker API integration.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

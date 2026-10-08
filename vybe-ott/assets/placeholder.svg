@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 342 513" width="342" height="513">
+  <rect width="342" height="513" fill="#16161d"/>
+  <rect x="20" y="20" width="302" height="473" rx="12" fill="#21212c" stroke="#333344" stroke-width="2"/>
+  <circle cx="171" cy="210" r="48" fill="#ff2d3d" opacity="0.2"/>
+  <polygon points="160,190 190,210 160,230" fill="#ff2d3d"/>
+  <text x="171" y="295" font-family="'Noto Sans', Arial, sans-serif" font-size="22" font-weight="700" fill="#ffffff" text-anchor="middle">
+    VYBE OTT
+  </text>
+  <text x="171" y="330" font-family="'Noto Sans', Arial, sans-serif" font-size="16" fill="#a8a8b3" text-anchor="middle">
+    Media Preview
+  </text>
+</svg>

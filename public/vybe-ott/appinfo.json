@@ -1,0 +1,14 @@
+{
+  "id": "com.vybe.ott",
+  "version": "1.0.0",
+  "vendor": "VYBE",
+  "type": "web",
+  "main": "index.html",
+  "title": "VYBE OTT",
+  "icon": "icon.png",
+  "largeIcon": "largeIcon.png",
+  "bgImage": "splash.png",
+  "resolution": "1920x1080",
+  "uiRevision": 2,
+  "disableBackHistoryAPI": true
+}

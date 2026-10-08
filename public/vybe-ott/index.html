@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>VYBE OTT</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <link rel="stylesheet" href="css/app.css">
+  <!-- hls.js fallback for desktop browser preview and older WebOS TVs without native HLS support -->
+  <script src="js/hls.min.js"></script>
+</head>
+<body>
+  <div id="vybe-root">
+    <!-- Splash Screen -->
+    <div id="splash-screen" class="splash-screen">
+      <div class="splash-logo-wrap">
+        <div class="splash-brand">VYBE <span class="accent">OTT</span></div>
+        <div class="splash-tagline">Cinema on your Television</div>
+      </div>
+    </div>
+
+    <!-- Main TV App Shell -->
+    <div class="app-shell">
+      <!-- Left Slim Icon Sidebar -->
+      <nav class="app-sidebar" data-nav-group="sidebar">
+        <div class="sidebar-logo">VYBE</div>
+        <div class="sidebar-nav-list">
+          <button class="sidebar-nav-btn focusable active" data-tab="home" title="Home">
+            <span class="nav-icon">&#8962;</span>
+            <span class="nav-label">Home</span>
+          </button>
+          <button class="sidebar-nav-btn focusable" data-tab="search" title="Search">
+            <span class="nav-icon">&#128269;</span>
+            <span class="nav-label">Search</span>
+          </button>
+          <button class="sidebar-nav-btn focusable" data-tab="movies" title="Movies">
+            <span class="nav-icon">&#127916;</span>
+            <span class="nav-label">Movies</span>
+          </button>
+          <button class="sidebar-nav-btn focusable" data-tab="tv" title="TV Shows">
+            <span class="nav-icon">&#128250;</span>
+            <span class="nav-label">Series</span>
+          </button>
+          <button class="sidebar-nav-btn focusable" data-tab="settings" title="Settings">
+            <span class="nav-icon">&#9881;</span>
+            <span class="nav-label">Settings</span>
+          </button>
+        </div>
+      </nav>
+
+      <!-- Viewport & Screen Content -->
+      <main class="app-content-viewport">
+        <div id="home-screen" class="app-screen"></div>
+        <div id="search-screen" class="app-screen hidden"></div>
+        <div id="movies-screen" class="app-screen hidden"></div>
+        <div id="tv-screen" class="app-screen hidden"></div>
+        <div id="settings-screen" class="app-screen hidden"></div>
+        <div id="details-screen" class="app-screen hidden"></div>
+      </main>
+    </div>
+
+    <!-- Fullscreen Player UI -->
+    <div id="player-screen" class="hidden">
+      <video id="vybe-video-element" playsinline></video>
+
+      <!-- Buffering Spinner -->
+      <div id="player-buffering-spinner" class="spinner-buffering hidden"></div>
+
+      <!-- Custom Subtitle Overlay Div (Don't rely on <track>) -->
+      <div id="vybe-subtitle-overlay" class="vybe-subtitle-overlay"></div>
+
+      <!-- Controls Overlay -->
+      <div id="player-controls-overlay" class="player-controls-overlay fade-in">
+        <div class="player-header">
+          <div id="player-title-display" class="player-title">Title</div>
+          <div id="player-source-summary" class="player-source-summary">Provider · Quality</div>
+        </div>
+
+        <div class="player-bottom-bar">
+          <div class="seek-container">
+            <div id="player-cur-time" class="seek-time">00:00</div>
+            <div class="seek-bar-track">
+              <div id="player-progress-bar" class="seek-bar-fill"></div>
+            </div>
+            <div id="player-total-time" class="seek-time">00:00</div>
+          </div>
+
+          <div class="player-actions-row" data-nav-group="player-controls">
+            <div class="left-actions">
+              <button id="btn-player-play" class="ctrl-btn focusable" onclick="VYBE_PLAYER.updatePlayPauseUI(); (document.getElementById('vybe-video-element').paused ? document.getElementById('vybe-video-element').play() : document.getElementById('vybe-video-element').pause())">
+                <span class="icon">&#9658;</span> Play
+              </button>
+              <button class="ctrl-btn focusable" onclick="document.getElementById('vybe-video-element').currentTime -= 10">-10s</button>
+              <button class="ctrl-btn focusable" onclick="document.getElementById('vybe-video-element').currentTime += 10">+10s</button>
+              <button id="btn-player-settings" class="ctrl-btn focusable" onclick="VYBE_PLAYER.openPanel('source')">
+                <span class="icon">&#9881;</span> Settings
+              </button>
+            </div>
+            <div class="right-actions">
+              <button class="ctrl-btn focusable" onclick="VYBE_PLAYER.close()">
+                <span class="icon">&#10005;</span> Exit Player
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Player Settings Right Drawer -->
+      <div id="player-settings-drawer" class="player-settings-drawer"></div>
+
+      <!-- Series Next Episode Autoplay Prompt -->
+      <div id="player-next-ep-prompt" class="next-ep-prompt hidden">
+        <div class="next-ep-header">Up Next in <span id="next-ep-countdown">10</span>s</div>
+        <div id="next-ep-title" class="next-ep-title">Episode Title</div>
+        <div class="next-ep-actions">
+          <button id="btn-play-next-now" class="ctrl-btn focusable" onclick="VYBE_PLAYER.playNextEpisode()">Play Now</button>
+          <button class="ctrl-btn focusable" onclick="VYBE_PLAYER.cancelNextEpisode()">Cancel</button>
+        </div>
+      </div>
+
+      <!-- Resume Prompt Modal -->
+      <div id="player-resume-modal" class="modal-overlay hidden">
+        <div class="modal-card">
+          <div class="modal-title">Resume Playback?</div>
+          <div class="modal-desc">You were watching at <span id="resume-time-text">00:00</span></div>
+          <div class="modal-actions" data-nav-group="resume-modal-actions">
+            <button id="btn-resume-yes" class="btn-hero-primary focusable">Resume</button>
+            <button id="btn-resume-no" class="btn-hero-secondary focusable">Start Over</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Playback Error Modal -->
+      <div id="player-error-modal" class="modal-overlay hidden">
+        <div class="modal-card">
+          <div class="modal-title">Playback Error</div>
+          <div id="player-error-text" class="modal-desc">Could not play stream from sources.</div>
+          <div class="modal-actions">
+            <button id="btn-error-retry-source" class="btn-hero-primary focusable">Try Another Source</button>
+            <button id="btn-error-back" class="btn-hero-secondary focusable">Back</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Exit App Confirmation Modal -->
+    <div id="exit-confirm-modal" class="modal-overlay hidden">
+      <div class="modal-card">
+        <div class="modal-title">Exit VYBE OTT?</div>
+        <div class="modal-desc">Are you sure you want to exit the application?</div>
+        <div class="modal-actions">
+          <button id="btn-exit-cancel" class="btn-hero-primary focusable">Stay</button>
+          <button id="btn-exit-confirm" class="btn-hero-secondary focusable">Exit</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Offline Network Modal -->
+    <div id="offline-modal" class="modal-overlay hidden" style="display: none;">
+      <div class="modal-card">
+        <div class="modal-title">No Internet Connection</div>
+        <div class="modal-desc">Please check your TV network connection.</div>
+        <div class="modal-actions">
+          <button class="btn-hero-primary focusable" onclick="document.getElementById('offline-modal').classList.add('hidden'); document.getElementById('offline-modal').style.display='none';">Dismiss &amp; Continue</button>
+          <button class="btn-hero-secondary focusable" onclick="window.location.reload()">Reload</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Toast Notification Banner -->
+    <div id="vybe-toast" class="vybe-toast"></div>
+
+    <!-- Hidden Diagnostics Overlay (Toggled by pressing '0' 5 times) -->
+    <div id="vybe-debug-overlay" style="display: none;">
+      <div style="font-weight: bold; margin-bottom: 8px;">VYBE TV DIAGNOSTICS</div>
+      <div id="vybe-debug-content"></div>
+    </div>
+  </div>
+
+  <!-- Vanilla Scripts (Ordered strictly for ES5/webOS 4.0 execution) -->
+  <script src="js/config.js"></script>
+  <script src="js/utils.js"></script>
+  <script src="js/api.js"></script>
+  <script src="js/tmdb.js"></script>
+  <script src="js/streams.js"></script>
+  <script src="js/focus.js"></script>
+  <script src="js/player.js"></script>
+  <script src="js/screens.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
