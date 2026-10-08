@@ -185,6 +185,10 @@
 
     // 2. Back button (461 webOS, 8 Backspace, 27 Esc)
     if (keyCode === 461 || keyCode === 8 || keyCode === 27) {
+      if (keyCode === 8 && e && e.target && /^(INPUT|TEXTAREA)$/i.test(e.target.tagName)) {
+        return false;
+      }
+
       // If exit modal is open
       var exitModal = document.getElementById('exit-confirm-modal');
       if (exitModal && !exitModal.classList.contains('hidden')) {

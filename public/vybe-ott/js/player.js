@@ -36,11 +36,21 @@
   var currentPanelTab = 'source'; // 'source', 'language', 'quality', 'subtitles'
   var nextEpisodeCountdownTimer = null;
   var nextEpisodeSecondsLeft = 10;
+  var currentIsProxied = false;   // true when the URL actually loaded goes through /api/proxy
+  var triedProviders = {};        // providers already given up on during failover
+  var loadId = 0;                 // increments on every Engine.load()
+  var lastErrorLoadId = -1;       // dedupe: one failover step per load
+  var hlsNetRetries = 0;
+  var hlsMediaRetries = 0;
+  var MAX_HLS_RETRIES = 2;
+  var MAX_FAILOVER_STEPS = 10;
 
   // Thin Player Engine
   var Engine = {
     init: function(videoNode) {
+      if (videoEl === videoNode && Engine._bound) return;
       videoEl = videoNode;
+      Engine._bound = true;
       Engine.bindVideoEvents();
     },
 
@@ -66,6 +76,9 @@
         Player.hideBuffering();
         failoverAttempts = 0; // reset on clean playback
         previousWorkingStream = currentStream;
+        if (currentStream && currentIsProxied) {
+          utils.storage.set('vybe_proxy_pref_' + currentStream.providerKey, true);
+        }
       });
 
       videoEl.addEventListener('timeupdate', function() {
@@ -88,7 +101,13 @@
       if (!videoEl) return;
       Player.showBuffering();
 
-      var isHls = url.indexOf('.m3u8') !== -1 || (currentStream && currentStream.url && currentStream.url.indexOf('.m3u8') !== -1);
+      loadId++;
+      hlsNetRetries = 0;
+      hlsMediaRetries = 0;
+      // Many providers serve HLS without a .m3u8 extension -> treat everything that is not a plain file as HLS
+      var plainUrl = url;
+      try { plainUrl = decodeURIComponent(url); } catch (eDec) {}
+      var isHls = !/\.(mp4|mkv|webm|m4v)(\?|&|$)/i.test(plainUrl);
       var canNativeHls = videoEl.canPlayType('application/vnd.apple.mpegurl');
 
       if (hlsInstance) {
@@ -122,12 +141,20 @@
           if (data.fatal) {
             switch (data.type) {
               case window.Hls.ErrorTypes.NETWORK_ERROR:
-                utils.log('hls.js fatal network error, running failover:', data);
-                Player.handlePlaybackError();
+                if (hlsNetRetries < MAX_HLS_RETRIES && hlsInstance) {
+                  hlsNetRetries++;
+                  hlsInstance.startLoad();
+                } else {
+                  Player.handlePlaybackError();
+                }
                 break;
               case window.Hls.ErrorTypes.MEDIA_ERROR:
-                utils.log('hls.js fatal media error, recovering');
-                hlsInstance.recoverMediaError();
+                if (hlsMediaRetries < MAX_HLS_RETRIES && hlsInstance) {
+                  hlsMediaRetries++;
+                  hlsInstance.recoverMediaError();
+                } else {
+                  Player.handlePlaybackError();
+                }
                 break;
               default:
                 utils.log('hls.js unrecoverable error:', data);
@@ -198,6 +225,9 @@
   Player.open = function(titleMeta, groupedStreams, startStream, resumePromptCallback) {
     currentTitleInfo = titleMeta;
     availableProviders = groupedStreams.byProvider || {};
+    triedProviders = {};
+    failoverAttempts = 0;
+    lastErrorLoadId = -1;
 
     var targetStream = startStream || streamsEngine.autoSelectInitialStream(groupedStreams);
     if (!targetStream) {
@@ -237,18 +267,19 @@
 
   Player.playStream = function(stream, startPos, forceProxy) {
     currentStream = stream;
+    isPlaying = false; // stale 'true' from the previous stream disabled the stall check
     utils.recordDebug('lastStream', stream.providerName + ' | ' + stream.language + ' | ' + stream.qualityLabel);
 
     var playUrl = api.buildPlayUrl(stream, forceProxy);
+    currentIsProxied = playUrl.indexOf('/api/proxy?') !== -1;
     Engine.load(playUrl, startPos || 0);
 
-    // Fallback: If after 8 seconds of direct play we are not playing, retry via proxy
-    if (!forceProxy) {
-      clearTimeout(Player._stallProxyTimer);
+    // If a DIRECT url has not started within 8 s, retry once through the proxy
+    clearTimeout(Player._stallProxyTimer);
+    if (!currentIsProxied) {
       Player._stallProxyTimer = setTimeout(function() {
         if (!isPlaying && Engine.getCurrentTime() === 0) {
-          utils.log('Playback stalled direct URL, retrying via proxy');
-          utils.storage.set('vybe_proxy_pref_' + stream.providerKey, true);
+          utils.log('Playback stalled on direct URL, retrying via proxy');
           Player.playStream(stream, startPos, true);
         }
       }, 8000);
@@ -256,16 +287,34 @@
   };
 
   /**
-   * Automatic Failover Chain:
-   * 1. Try collapsed mirrors
-   * 2. Retry via proxy
-   * 3. Next lower quality in same language
-   * 4. Next provider in preference list
-   * 5. Show error screen
+   * Live provider updates: streams from slower providers keep arriving after the player opened
+   */
+  Player.isOpen = function() {
+    var el = document.getElementById('player-screen');
+    return !!(el && !el.classList.contains('hidden'));
+  };
+
+  Player.updateProviders = function(groupedStreams) {
+    if (groupedStreams && groupedStreams.byProvider) {
+      availableProviders = groupedStreams.byProvider;
+    }
+  };
+
+  /**
+   * Automatic Failover Chain
    */
   Player.handlePlaybackError = function() {
     clearTimeout(Player._stallProxyTimer);
+
+    // One failover step per load (video 'error' + hls.js fatal can both fire for the same failure)
+    if (lastErrorLoadId === loadId) return;
+    lastErrorLoadId = loadId;
+
     failoverAttempts++;
+    if (failoverAttempts > MAX_FAILOVER_STEPS) {
+      Player.showErrorDialog('Could not play stream from sources. Please try another source.');
+      return;
+    }
 
     if (!currentStream) {
       Player.showErrorDialog('Unable to play video.');
@@ -274,20 +323,20 @@
 
     var currentTime = Engine.getCurrentTime();
 
-    // 1. Try extra mirrors if available
+    // 1. Try extra mirrors (work on a copy, never mutate the cached stream)
     if (currentStream.mirrors && currentStream.mirrors.length > 0) {
-      var nextMirror = currentStream.mirrors.shift();
+      var mirrorStream = Object.assign({}, currentStream, {
+        url: currentStream.mirrors[0],
+        mirrors: currentStream.mirrors.slice(1)
+      });
       utils.showToast('Connecting to backup mirror...');
-      currentStream.url = nextMirror;
-      Player.playStream(currentStream, currentTime);
+      Player.playStream(mirrorStream, currentTime);
       return;
     }
 
-    // 2. Try proxy retry once
-    var isAlreadyProxied = currentStream.url.indexOf('/api/proxy') !== -1;
-    if (!isAlreadyProxied) {
+    // 2. Retry through the proxy once (uses the real loaded state, not the raw url)
+    if (!currentIsProxied) {
       utils.showToast('Retrying via stream proxy...');
-      utils.storage.set('vybe_proxy_pref_' + currentStream.providerKey, true);
       Player.playStream(currentStream, currentTime, true);
       return;
     }
@@ -310,18 +359,23 @@
       return;
     }
 
-    // 4. Try next available provider
-    var allKeys = Object.keys(availableProviders);
-    var curIdx = allKeys.indexOf(activeProviderKey);
-    if (curIdx !== -1 && curIdx < allKeys.length - 1 && failoverAttempts <= 4) {
-      var nextProv = allKeys[curIdx + 1];
-      var nextList = availableProviders[nextProv];
-      if (nextList && nextList.length > 0) {
-        utils.showToast('Switching to ' + nextList[0].providerName + '...');
-        activeProviderKey = nextProv;
-        activeLanguage = nextList[0].language;
-        activeQualityRank = nextList[0].qualityRank;
-        Player.playStream(nextList[0], currentTime);
+    // 4. Next UNTRIED provider, in configured preference order
+    triedProviders[activeProviderKey] = true;
+    var order = config.PROVIDER_ORDER || [];
+    var allKeys = Object.keys(availableProviders).sort(function(a, b) {
+      var ia = order.indexOf(a); if (ia === -1) ia = 999;
+      var ib = order.indexOf(b); if (ib === -1) ib = 999;
+      return ia - ib;
+    });
+    for (var k = 0; k < allKeys.length; k++) {
+      var cand = allKeys[k];
+      var candList = availableProviders[cand];
+      if (!triedProviders[cand] && candList && candList.length > 0) {
+        utils.showToast('Switching to ' + candList[0].providerName + '...');
+        activeProviderKey = cand;
+        activeLanguage = candList[0].language;
+        activeQualityRank = candList[0].qualityRank;
+        Player.playStream(candList[0], currentTime);
         return;
       }
     }
@@ -336,6 +390,8 @@
   Player.switchStream = function(newStream) {
     if (!newStream) return;
     var currentTime = Engine.getCurrentTime();
+    triedProviders = {};
+    failoverAttempts = 0;
     utils.showToast('Switching to ' + newStream.providerName + ' · ' + newStream.language + ' · ' + newStream.qualityLabel + '...');
 
     activeProviderKey = newStream.providerKey;
@@ -900,6 +956,9 @@
     clearTimeout(controlsHideTimer);
     clearTimeout(Player._stallProxyTimer);
     clearInterval(nextEpisodeCountdownTimer);
+    nextEpisodeCountdownTimer = null;   // stale id blocked the next-episode prompt in later sessions
+    var nextPrompt = document.getElementById('player-next-ep-prompt');
+    if (nextPrompt) nextPrompt.classList.add('hidden');
 
     window.VYBE_FOCUS.unregisterKeyListener(Player.handlePlayerKeys);
     Engine.destroy();

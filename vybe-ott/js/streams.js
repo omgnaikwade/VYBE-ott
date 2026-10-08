@@ -67,7 +67,9 @@
     if (!name || name.indexOf('|') === -1) return '';
     var parts = name.split('|');
     if (parts.length > 1) {
-      return parts[1].trim();
+      var sub = parts[1].trim();
+      if (/^\d{3,4}p?$/i.test(sub) || /^(auto|sd|hd|fhd|uhd|4k)$/i.test(sub)) return '';
+      return sub;
     }
     return '';
   };
@@ -312,7 +314,7 @@
    * Auto-pick initial stream based on user settings:
    * Same provider preference -> preferred language -> highest quality <= preferred max
    */
-  Streams.autoSelectInitialStream = function(groupedData) {
+  Streams.autoSelectInitialStream = function(groupedData, preferredProviderKey) {
     if (!groupedData || !groupedData.providers || !groupedData.providers.length) {
       return null;
     }
@@ -322,6 +324,9 @@
     var maxRank = parseInt(preferredMaxQ, 10) || 1080;
 
     var bestProvider = groupedData.providers[0];
+    if (preferredProviderKey && groupedData.byProvider[preferredProviderKey] && groupedData.byProvider[preferredProviderKey].length) {
+      bestProvider = preferredProviderKey;
+    }
     var streams = groupedData.byProvider[bestProvider] || [];
     if (!streams.length) return null;
 

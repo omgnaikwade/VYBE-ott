@@ -11,7 +11,7 @@ var VYBE_CONFIG = {
   API_BASE_URL: "https://myapp-working.vyoma-apps.workers.dev",
 
   // Fallback to sample catalog if Worker URL is unchanged/unreachable during testing
-  USE_DEMO_FALLBACK_IF_OFFLINE: true,
+  USE_DEMO_FALLBACK_IF_OFFLINE: false,
 
   // Provider preference hierarchy (used for auto-selecting best stream)
   PROVIDER_ORDER: [

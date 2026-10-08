@@ -15,10 +15,11 @@ import {
   HelpCircle,
   Copy,
   Check,
-  ExternalLink,
+  RotateCcw,
   Sliders,
   Smartphone,
-  Info
+  Flame,
+  Film
 } from 'lucide-react';
 
 export default function App() {
@@ -28,6 +29,7 @@ export default function App() {
   const [remoteExpanded, setRemoteExpanded] = useState(true);
   const [lastKey, setLastKey] = useState<string>('Ready');
   const [zeroClickCount, setZeroClickCount] = useState(0);
+  const [iframeKey, setIframeKey] = useState<number>(Date.now());
 
   // Send key event to the webOS TV iframe
   const sendKeyToTv = (keyCode: number, keyName: string) => {
@@ -46,6 +48,25 @@ export default function App() {
     } catch (e) {
       console.warn('Could not dispatch key directly to iframe:', e);
     }
+  };
+
+  // Launch verified real movie in iframe
+  const quickLaunchMovie = (title: string, tmdbId: number) => {
+    setLastKey(`Launch ${title}`);
+    try {
+      const win = iframeRef.current?.contentWindow as any;
+      if (win && win.VYBE_SCREENS && win.VYBE_SCREENS.openDetails) {
+        win.VYBE_SCREENS.openDetails('movie', tmdbId, true);
+      }
+    } catch (e) {
+      console.warn('Quick launch error:', e);
+    }
+  };
+
+  // Hard reload TV iframe with fresh cache buster
+  const reloadTvScreen = () => {
+    setIframeKey(Date.now());
+    setLastKey('TV Reloaded');
   };
 
   // Listen to physical keyboard on the parent window and forward to iframe
@@ -111,21 +132,61 @@ export default function App() {
             <span className="text-xs bg-[#ff2d3d] text-white font-bold px-2 py-0.5 rounded">TV</span>
           </div>
           <span className="text-xs text-zinc-400 border-l border-white/10 pl-3">
-            LG webOS 4.0+ TV Preview &bull; 1920&times;1080 Magic Remote Canvas
+            LG webOS 4.0+ TV Preview &bull; 1920&times;1080 Native Canvas &bull; Live TMDB API
           </span>
         </div>
 
-        <div className="flex items-center space-x-3 text-xs">
+        <div className="flex items-center space-x-2 text-xs">
+          {/* Quick Launch Buttons for Instant Real Streaming Test */}
+          <div className="hidden lg:flex items-center space-x-1.5 bg-[#171722] border border-white/10 rounded-lg px-2 py-1 mr-2">
+            <span className="text-[10px] text-zinc-400 font-semibold uppercase tracking-wider flex items-center mr-1">
+              <Flame className="w-3 h-3 text-[#ff2d3d] mr-1" />
+              Test Stream:
+            </span>
+            <button
+              onClick={() => quickLaunchMovie('3 Idiots', 20453)}
+              className="bg-zinc-800 hover:bg-[#ff2d3d] text-zinc-200 hover:text-white px-2 py-0.5 rounded text-[11px] font-medium transition-colors"
+              title="TMDB 20453 - Verified 3 working streams with Hindi audio"
+            >
+              3 Idiots
+            </button>
+            <button
+              onClick={() => quickLaunchMovie('Oppenheimer', 872585)}
+              className="bg-zinc-800 hover:bg-[#ff2d3d] text-zinc-200 hover:text-white px-2 py-0.5 rounded text-[11px] font-medium transition-colors"
+              title="TMDB 872585 - Verified 7 working streams"
+            >
+              Oppenheimer
+            </button>
+            <button
+              onClick={() => quickLaunchMovie('RRR', 579974)}
+              className="bg-zinc-800 hover:bg-[#ff2d3d] text-zinc-200 hover:text-white px-2 py-0.5 rounded text-[11px] font-medium transition-colors"
+              title="TMDB 579974 - Verified 6 working streams"
+            >
+              RRR
+            </button>
+          </div>
+
+          <button
+            onClick={reloadTvScreen}
+            className="flex items-center space-x-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 px-2.5 py-1.5 rounded-lg border border-white/10 transition-colors"
+            title="Reload TV iframe fresh without browser cache"
+          >
+            <RotateCcw className="w-3.5 h-3.5 text-sky-400" />
+            <span>Reload TV</span>
+          </button>
+
           <span className="text-zinc-400">
-            Last Remote Action: <strong className="text-white bg-zinc-800 px-2 py-1 rounded">{lastKey}</strong>
+            Action: <strong className="text-white bg-zinc-800 px-2 py-1 rounded">{lastKey}</strong>
           </span>
+
           <button
             onClick={() => setShowHelpModal(true)}
             className="flex items-center space-x-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 px-3 py-1.5 rounded-lg border border-white/10 transition-colors"
           >
             <Smartphone className="w-3.5 h-3.5 text-[#ff2d3d]" />
-            <span>Install on TV Guide</span>
+            <span>TV Install</span>
           </button>
+
           <button
             onClick={() => setRemoteExpanded(!remoteExpanded)}
             className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg border transition-colors ${
@@ -133,7 +194,7 @@ export default function App() {
             }`}
           >
             <Sliders className="w-3.5 h-3.5" />
-            <span>{remoteExpanded ? 'Hide Remote' : 'Show Remote'}</span>
+            <span>{remoteExpanded ? 'Hide' : 'Remote'}</span>
           </button>
         </div>
       </header>
@@ -141,12 +202,13 @@ export default function App() {
       {/* Main Workbench Area */}
       <div className="flex-1 flex overflow-hidden relative">
         {/* TV Display Bezel & Canvas */}
-        <div className="flex-1 flex items-center justify-center p-4 bg-[#0a0a0f] relative overflow-hidden">
+        <div className="flex-1 flex items-center justify-center p-3 bg-[#0a0a0f] relative overflow-hidden">
           <div className="relative w-full h-full max-w-[1720px] max-h-[960px] aspect-video bg-black rounded-2xl shadow-2xl overflow-hidden border-[6px] border-[#181822] flex flex-col">
             {/* TV Screen Glass */}
             <iframe
+              key={iframeKey}
               ref={iframeRef}
-              src="/vybe-ott/index.html"
+              src={`/vybe-ott/index.html?t=${iframeKey}`}
               title="VYBE OTT LG webOS App"
               allow="autoplay; fullscreen; encrypted-media"
               className="w-full h-full border-0 bg-[#0b0b0f]"

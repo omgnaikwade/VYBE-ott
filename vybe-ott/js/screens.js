@@ -25,6 +25,11 @@
   var detailsCheckedCount = 0;
   var detailsTotalProviders = config.ALL_PROVIDERS.length;
   var selectedSeasonNumber = 1;
+  var detailsCheckToken = 0;          // invalidates callbacks of older stream checks
+  var detailsSelectedProvider = null; // provider chip chosen by the user
+  var detailsCurrentSeason;
+  var detailsCurrentEpisode;
+  var detailsEpisodes = [];
 
   // Search state
   var searchQuery = '';
@@ -196,9 +201,18 @@
       '</div>';
     parent.appendChild(rowDiv);
 
+    var showRowError = function(msg) {
+      var sl = document.getElementById(configObj.id + '-slider');
+      if (sl) sl.innerHTML = '<div class="shelf-skeleton">' + msg + '</div>';
+    };
+
     configObj.fetcher().then(function(data) {
       var slider = document.getElementById(configObj.id + '-slider');
-      if (!slider || !data || !data.results) return;
+      if (!slider) return;
+      if (!data || !data.results || !data.results.length) {
+        showRowError('No titles found');
+        return;
+      }
 
       var items = data.results.slice(0, 20);
       slider.innerHTML = items.map(function(item) {
@@ -218,7 +232,8 @@
           '</div>';
       }).join('');
     }).catch(function(err) {
-      utils.log('Row load failed for ' + configObj.title + ':', err);
+      utils.log('Row load failed for ' + configObj.title + ':', err && err.message);
+      showRowError('Could not load (' + ((err && err.message) || 'error') + ')');
     });
   };
 
@@ -226,6 +241,10 @@
   // 2. DETAILS SCREEN & PARALLEL SOURCE CHECK
   // ==========================================
   Screens.openDetails = function(mediaType, id, autoPlayOnReady) {
+    detailsCheckToken++;
+    detailsSelectedProvider = null;
+    detailsEpisodes = [];
+
     window.VYBE_APP.pushScreen('details-screen');
     var screenEl = document.getElementById('details-screen');
     screenEl.innerHTML = '<div class="details-loading-state"><div class="spinner"></div><p>Loading title details...</p></div>';
@@ -341,6 +360,14 @@
     var summaryEl = document.getElementById('details-stream-summary-text');
     if (!playBtn) return;
 
+    // A new check invalidates every callback of any older check (other title / other episode / retry).
+    // Without this, old responses were mixed into the new title's stream list.
+    detailsCheckToken++;
+    var myToken = detailsCheckToken;
+    detailsCurrentSeason = season;
+    detailsCurrentEpisode = episode;
+    detailsSelectedProvider = null;
+
     var cacheKey = streamsEngine.makeCacheKey(mediaType, id, season, episode);
 
     // Negative cache check
@@ -352,11 +379,11 @@
     // Memory cache check
     var cached = streamsEngine.getCached(cacheKey);
     if (cached) {
-      Screens.onStreamsLoaded(cached.grouped, autoPlayOnReady);
+      detailsAggregatedStreams = cached.rawStreams.slice();
+      Screens.onStreamsLoaded(cached.grouped, autoPlayOnReady, false);
       return;
     }
 
-    detailsStreamChecks = {};
     detailsAggregatedStreams = [];
     detailsCheckedCount = 0;
     var allProviders = config.ALL_PROVIDERS;
@@ -371,25 +398,38 @@
     for (var i = 0; i < allProviders.length; i++) {
       (function(prov) {
         api.fetchProviderStreams(prov.key, mediaType, id, season, episode)
+          .then(function(res) { return res; }, function() { return null; })
           .then(function(res) {
+            if (myToken !== detailsCheckToken) return; // stale response, ignore
             detailsCheckedCount++;
-            if (res && res.streams && res.streams.length > 0) {
-              detailsAggregatedStreams = detailsAggregatedStreams.concat(res.streams);
 
-              var currentGrouped = streamsEngine.groupAndNormalize(detailsAggregatedStreams);
-              Screens.renderSourceChips(currentGrouped);
+            try {
+              if (res && res.streams && res.streams.length > 0) {
+                detailsAggregatedStreams = detailsAggregatedStreams.concat(res.streams);
 
-              // As soon as first provider returns >=1 stream, enable PLAY! (§3.3)
-              if (!hasActivatedPlay) {
-                hasActivatedPlay = true;
-                Screens.enablePlayButton(currentGrouped, autoPlayOnReady);
+                var currentGrouped = streamsEngine.groupAndNormalize(detailsAggregatedStreams);
+                Screens.renderSourceChips(currentGrouped);
+
+                // Player may already be open (auto-play): give it the new providers too
+                if (window.VYBE_PLAYER && window.VYBE_PLAYER.isOpen && window.VYBE_PLAYER.isOpen()) {
+                  window.VYBE_PLAYER.updateProviders(currentGrouped);
+                }
+
+                // As soon as first provider returns >=1 stream, enable PLAY! (§3.3)
+                if (!hasActivatedPlay) {
+                  hasActivatedPlay = true;
+                  Screens.enablePlayButton(currentGrouped, autoPlayOnReady, false);
+                }
               }
-            }
 
-            // Update counter if still checking
-            var btn = document.getElementById('btn-details-play');
-            if (btn && btn.classList.contains('checking')) {
-              btn.innerHTML = '<span class="spinner-inline"></span> Checking sources... ' + detailsCheckedCount + '/' + detailsTotalProviders;
+              // Update counter if still checking
+              var btn = document.getElementById('btn-details-play');
+              if (btn && btn.classList.contains('checking')) {
+                btn.innerHTML = '<span class="spinner-inline"></span> Checking sources... ' + detailsCheckedCount + '/' + detailsTotalProviders;
+              }
+            } catch (e) {
+              // A render error must never leave the counter stuck below 9/9
+              utils.log('Stream check handler error:', e && e.message);
             }
 
             // All finished
@@ -400,7 +440,8 @@
               } else {
                 var finalGrouped = streamsEngine.groupAndNormalize(detailsAggregatedStreams);
                 streamsEngine.setCached(cacheKey, detailsAggregatedStreams, finalGrouped);
-                Screens.onStreamsLoaded(finalGrouped, false);
+                // keepFocus=true: do not steal the user's focus again at the end
+                Screens.onStreamsLoaded(finalGrouped, false, true);
               }
             }
           });
@@ -408,7 +449,7 @@
     }
   };
 
-  Screens.enablePlayButton = function(groupedStreams, autoPlayOnReady) {
+  Screens.enablePlayButton = function(groupedStreams, autoPlayOnReady, keepFocus) {
     var playBtn = document.getElementById('btn-details-play');
     if (!playBtn) return;
 
@@ -416,20 +457,20 @@
     playBtn.className = 'btn-play-details focusable active';
     playBtn.innerHTML = '<span class="icon">&#9658;</span> Play';
 
+    // Always use the LATEST merged list at click time (slow providers keep arriving)
     playBtn.onclick = function() {
-      var latest = detailsAggregatedStreams.length > 0 ? streamsEngine.groupAndNormalize(detailsAggregatedStreams) : groupedStreams;
-      Screens.launchPlayerWithDetails(latest);
+      Screens.launchPlayerWithDetails(streamsEngine.groupAndNormalize(detailsAggregatedStreams));
     };
 
-    window.VYBE_FOCUS.setFocus(playBtn);
+    if (!keepFocus) window.VYBE_FOCUS.setFocus(playBtn);
 
     if (autoPlayOnReady) {
       Screens.launchPlayerWithDetails(groupedStreams);
     }
   };
 
-  Screens.onStreamsLoaded = function(groupedStreams, autoPlayOnReady) {
-    Screens.enablePlayButton(groupedStreams, autoPlayOnReady);
+  Screens.onStreamsLoaded = function(groupedStreams, autoPlayOnReady, keepFocus) {
+    Screens.enablePlayButton(groupedStreams, autoPlayOnReady, keepFocus);
     Screens.renderSourceChips(groupedStreams);
   };
 
@@ -438,17 +479,28 @@
     var summaryEl = document.getElementById('details-stream-summary-text');
     if (!chipsContainer || !groupedStreams || !groupedStreams.providers.length) return;
 
-    var selectedProvider = groupedStreams.providers[0];
+    var selectedProvider = (detailsSelectedProvider && groupedStreams.byProvider[detailsSelectedProvider]) ?
+      detailsSelectedProvider : groupedStreams.providers[0];
+
+    // Re-rendering replaces the chip nodes: remember which chip had focus and restore it
+    var cur = window.VYBE_FOCUS.getCurrent();
+    var focusedProv = (cur && cur.getAttribute && cur.getAttribute('data-provider') && chipsContainer.contains(cur)) ?
+      cur.getAttribute('data-provider') : null;
 
     chipsContainer.innerHTML = '<div class="chip-label">Source:</div>' +
       groupedStreams.providers.map(function(pKey) {
         var list = groupedStreams.byProvider[pKey] || [];
         var pName = list.length > 0 ? list[0].providerName : pKey;
         var isSelected = pKey === selectedProvider;
-        return '<button class="source-chip focusable' + (isSelected ? ' active' : '') + '" onclick="VYBE_SCREENS.onDetailsChipClick(\'' + pKey + '\')">' +
+        return '<button class="source-chip focusable' + (isSelected ? ' active' : '') + '" data-provider="' + pKey + '" onclick="VYBE_SCREENS.onDetailsChipClick(\'' + pKey + '\')">' +
           pName + ' (' + list.length + ')' +
           '</button>';
       }).join('');
+
+    if (focusedProv) {
+      var again = chipsContainer.querySelector('[data-provider="' + focusedProv + '"]');
+      if (again) window.VYBE_FOCUS.setFocus(again, true);
+    }
 
     // Summary text under chips: "Hindi · Tamil · English subs · up to 1080p"
     if (summaryEl) {
@@ -461,15 +513,16 @@
   };
 
   Screens.onDetailsChipClick = function(pKey) {
+    // Remember the choice: Play now starts with THIS provider (was cosmetic before)
+    detailsSelectedProvider = pKey;
     var currentGrouped = streamsEngine.groupAndNormalize(detailsAggregatedStreams);
     var chipBtns = document.querySelectorAll('.source-chip');
     for (var i = 0; i < chipBtns.length; i++) {
       chipBtns[i].classList.remove('active');
-      if (chipBtns[i].textContent.toLowerCase().indexOf(pKey) !== -1) {
+      if (chipBtns[i].getAttribute('data-provider') === pKey) {
         chipBtns[i].classList.add('active');
       }
     }
-    // Update summary text
     var summaryEl = document.getElementById('details-stream-summary-text');
     if (summaryEl) {
       var topStreams = currentGrouped.byProvider[pKey] || [];
@@ -516,13 +569,28 @@
 
   Screens.launchPlayerWithDetails = function(groupedStreams, episodeObj, nextEpisodeObj) {
     var item = currentDetailsData;
+    if (!item) return;
+
+    // Series: episode info used to be lost (resume key + next-episode autoplay never worked)
+    if (!episodeObj && item.mediaType === 'tv' && detailsCurrentEpisode !== undefined) {
+      episodeObj = { season_number: detailsCurrentSeason, episode_number: detailsCurrentEpisode };
+      for (var e = 0; e < detailsEpisodes.length; e++) {
+        if (detailsEpisodes[e].episode_number === detailsCurrentEpisode) {
+          episodeObj = detailsEpisodes[e];
+          if (episodeObj.season_number === undefined) episodeObj.season_number = detailsCurrentSeason;
+          if (!nextEpisodeObj && detailsEpisodes[e + 1]) nextEpisodeObj = detailsEpisodes[e + 1];
+          break;
+        }
+      }
+    }
+
     var titleMeta = {
       id: item.id,
       type: item.mediaType,
       title: item.title || item.name,
       poster: item.poster_path,
       backdrop: item.backdrop_path,
-      season: episodeObj ? episodeObj.season_number : undefined,
+      season: episodeObj ? (episodeObj.season_number || detailsCurrentSeason) : undefined,
       episode: episodeObj ? episodeObj.episode_number : undefined,
       nextEpisode: nextEpisodeObj,
       playNextCallback: function() {
@@ -532,7 +600,15 @@
       }
     };
 
-    window.VYBE_PLAYER.open(titleMeta, groupedStreams);
+    var startStream = streamsEngine.autoSelectInitialStream(groupedStreams, detailsSelectedProvider);
+    window.VYBE_PLAYER.open(titleMeta, groupedStreams, startStream);
+  };
+
+  // Was referenced by playNextCallback but never defined (next-episode autoplay threw TypeError)
+  Screens.playEpisodeDirect = function(epObj) {
+    if (!epObj || !currentDetailsData) return;
+    window.VYBE_PLAYER.close();
+    Screens.startParallelStreamCheck('tv', currentDetailsData.id, selectedSeasonNumber, epObj.episode_number, true);
   };
 
   // TV Seasons & Episodes
@@ -546,6 +622,7 @@
 
     tmdb.getSeason(tvId, selectedSeasonNumber).then(function(seasonData) {
       var episodes = (seasonData && seasonData.episodes) || [];
+      detailsEpisodes = episodes;
       if (!episodes.length) {
         section.innerHTML = '<div class="no-episodes">No episodes found.</div>';
         return;
