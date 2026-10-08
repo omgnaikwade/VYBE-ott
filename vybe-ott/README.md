@@ -1,6 +1,6 @@
 # VYBE OTT — LG webOS TV App
 
-A Netflix-style movie and series streaming application crafted for **LG webOS TV (webOS 4.0+ / Chromium 53)**, fully navigable with LG Magic Remote D-pad and Pointer, backed by your Cloudflare Worker.
+A Netflix-style movie and series streaming application crafted for **LG webOS TV (webOS 4.0+ / Chromium 52)**, fully navigable with LG Magic Remote D-pad and Pointer, backed by your Cloudflare Worker.
 
 ---
 
